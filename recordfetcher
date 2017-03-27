@@ -1,0 +1,31 @@
+#!/bin/bash
+echo "Here"
+set -e
+# Script to update a zone - designed to be triggerd by nsnotifyd
+PATH=/bin:/usr/bin:/usr/local/bin:$PATH
+
+DYN_HOST=xfrout1.dynect.net
+
+ZONE=$1
+SERIAL_NUMBER=$2
+
+ZONEFILE=`mktemp /tmp/${ZONE}.zonefile.XXXXXXXXX`
+dig AXFR ${ZONE} @${DYN_HOST} > ${ZONEFILE} 2>&1
+
+if ! egrep "Transfer failed|connection timed out|Name or service not known|connection refused|network unreachable|host unreachable|end of file|communications error|couldn't get address" ${ZONEFILE} > /dev/null; then
+  SOA_SERIAL=$( cat ${ZONEFILE} | awk '{if ($4 == "SOA") print $7;}' | head -1 )
+
+  if [ "$SOA_SERIAL" -eq "$SOA_SERIAL" ] 2>/dev/null; then
+    SERIAL=$SOA_SERIAL
+  else
+    echo "SOA record not found in transferred zone, couldn't extract serial"
+    exit
+  fi
+
+  # append a serial number record for troubleshooting
+  echo -e "\n_serial._dyn.${ZONE}. IN TXT \"${SERIAL}\"" >> ${ZONEFILE}
+
+  # push into Route53
+  cli53 import --file ${ZONEFILE} --replace ${ZONE}
+fi
+rm ${ZONEFILE}
